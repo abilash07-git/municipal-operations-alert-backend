@@ -241,16 +241,22 @@ class PrivacyRedactor:
         gray = cv2.cvtColor(scaled, cv2.COLOR_BGR2GRAY)
         hsv = cv2.cvtColor(scaled, cv2.COLOR_BGR2HSV)
 
-        # Commercial Yellow (taxi, auto, truck): H [12, 38], S [48, 255], V [70, 255]
-        mask_y = cv2.inRange(hsv, np.array([12, 48, 70]), np.array([38, 255, 255]))
-        # Standard Private White: S [0, 42], V [160, 255]
-        mask_w = cv2.inRange(hsv, np.array([0, 0, 160]), np.array([180, 42, 255]))
-        color_mask = cv2.bitwise_or(mask_y, mask_w)
+        # Commercial Yellow (taxi, auto, truck): H [12, 38], S [45, 255], V [65, 255]
+        mask_y = cv2.inRange(hsv, np.array([12, 45, 65]), np.array([38, 255, 255]))
+        # Standard Private White: S [0, 45], V [155, 255]
+        mask_w = cv2.inRange(hsv, np.array([0, 0, 155]), np.array([180, 45, 255]))
 
-        # Horizontal grouping to fuse plate characters into single candidate bounding region
-        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (15, 5))
-        closed = cv2.morphologyEx(color_mask, cv2.MORPH_CLOSE, kernel)
-        cnts, _ = cv2.findContours(closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        # Segment candidates across yellow and white palettes independently so that yellow
+        # taxi/auto plates mounted on white vehicle bodies do not get swallowed into the vehicle body
+        kernel_y = cv2.getStructuringElement(cv2.MORPH_RECT, (9, 3))
+        closed_y = cv2.morphologyEx(mask_y, cv2.MORPH_CLOSE, kernel_y)
+        cnts_y, _ = cv2.findContours(closed_y, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+        kernel_w = cv2.getStructuringElement(cv2.MORPH_RECT, (13, 5))
+        closed_w = cv2.morphologyEx(mask_w, cv2.MORPH_CLOSE, kernel_w)
+        cnts_w, _ = cv2.findContours(closed_w, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+        cnts = list(cnts_y) + list(cnts_w)
 
         candidates = []
         for c in cnts:
@@ -276,6 +282,7 @@ class PrivacyRedactor:
                 continue
 
             roi_bgr = scaled[by:by+bh, bx:bx+bw]
+            hsv_roi = cv2.cvtColor(roi_bgr, cv2.COLOR_BGR2HSV)
             if not self._check_plate_color_validity(roi_bgr):
                 continue
 
@@ -305,16 +312,21 @@ class PrivacyRedactor:
             x2 = min(proc_w, bx + bw + pad)
             y2 = min(proc_h, by + bh + pad)
             surround = gray[y1:y2, x1:x2]
+            surround_hsv = hsv[y1:y2, x1:x2]
             plate_mean = np.mean(roi)
+            plate_sat = np.mean(hsv_roi[:, :, 1])
             mask = np.ones(surround.shape, dtype=bool)
             mask[by-y1:by-y1+bh, bx-x1:bx-x1+bw] = False
             surround_mean = np.mean(surround[mask]) if np.any(mask) else plate_mean
+            surround_sat = np.mean(surround_hsv[mask, 1]) if np.any(mask) else plate_sat
             surround_diff = abs(plate_mean - surround_mean)
-            if surround_diff < 16.0:
+            sat_diff = abs(plate_sat - surround_sat)
+            eff_contrast = max(surround_diff, sat_diff * 0.70)
+            if eff_contrast < 15.0:
                 continue
 
             orig_box = [int(bx / scale), int(by / scale), int(bw / scale), int(bh / scale)]
-            candidates.append((orig_box, max_trans, std_v, surround_diff))
+            candidates.append((orig_box, max_trans, std_v, eff_contrast))
 
         if not candidates:
             return []
@@ -448,8 +460,15 @@ class PrivacyRedactor:
 
         return redacted_bytes, metadata
 
-    def _load_as_cv2(self, image_input: Union[bytes, np.ndarray, Image.Image]) -> np.ndarray:
-        if isinstance(image_input, bytes):
+    def _load_as_cv2(self, image_input: Union[str, bytes, np.ndarray, Image.Image]) -> np.ndarray:
+        if isinstance(image_input, (str, os.PathLike)):
+            if not os.path.exists(image_input):
+                raise FileNotFoundError(f"Image file not found: {image_input}")
+            img = cv2.imread(str(image_input))
+            if img is None:
+                raise ValueError(f"Failed to read image at: {image_input}")
+            return img
+        elif isinstance(image_input, bytes):
             pil_img = Image.open(io.BytesIO(image_input))
             clean_pil = self.strip_exif(pil_img)
             return cv2.cvtColor(np.array(clean_pil), cv2.COLOR_RGB2BGR)
