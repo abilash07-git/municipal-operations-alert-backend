@@ -1,24 +1,17 @@
-# Byte-compiled / optimized / DLL files
+# Python Bytecode
 __pycache__/
 *.py[cod]
 *$py.class
 
-# Runtime media storage (keep folders, ignore generated files)
-storage/public/*.jpg
-storage/public/*.png
-storage/vault/*.jpg
-storage/vault/*.png
-storage/audit_trail.jsonl
-!storage/public/.gitkeep
-!storage/vault/.gitkeep
-
-# Environment & Secrets
+# Environments
 .env
 .venv
 env/
 venv/
 *.log
 
-# OS generated
+# OS / Editor artifacts
 .DS_Store
 Thumbs.db
+.vscode/
+.idea/
