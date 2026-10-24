@@ -23,7 +23,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
-    expose_headers=["X-Faces-Redacted", "X-Plates-Redacted", "X-Latency-Ms", "X-Total-Redactions"]
+    expose_headers=["X-Faces-Redacted", "X-Plates-Redacted", "X-Numbers-Redacted", "X-Latency-Ms", "X-Total-Redactions"]
 )
 
 # Initialize the Privacy Redactor singleton
@@ -59,6 +59,7 @@ async def redact_image_file(
         headers = {
             "X-Faces-Redacted": str(meta["faces_redacted"]),
             "X-Plates-Redacted": str(meta["plates_redacted"]),
+            "X-Numbers-Redacted": str(meta.get("numbers_redacted", 0)),
             "X-Total-Redactions": str(meta["total_redactions"]),
             "X-Latency-Ms": str(meta["latency_ms"])
         }
@@ -109,6 +110,7 @@ async def detect_pii(file: UploadFile = File(...)):
             "total_detected": len(targets),
             "faces_count": sum(1 for t in targets if t["type"] == "Face"),
             "plates_count": sum(1 for t in targets if t["type"] == "License Plate"),
+            "numbers_count": sum(1 for t in targets if "Number" in t["type"]),
             "detections": targets
         }
     except Exception as e:

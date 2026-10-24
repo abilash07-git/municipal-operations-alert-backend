@@ -20,6 +20,8 @@ Designed as a **modular drop-in tool** that other developers can easily integrat
   * Automatically scans high-resolution images using adaptive sliding windows so distant, small background faces in crowded scenes are reliably caught.
 * **Dual-Palette Vehicle License Plate Detection**:
   * Accurately detects both **private white number plates** and **commercial transport yellow plates** (auto-rickshaws, cabs, trucks, buses) via calibrated HSV segmentation and aspect-ratio contour filters.
+* **Phone Number & Background Digit Masking (DBNet)**:
+  * Detects contact numbers, phone numbers, and digit sequences on background signboards, banners, posters, and vehicles via deep DBNet text detection.
 * **Camera EXIF Metadata Scrubbing**:
   * Automatically strips camera hardware serial numbers, device model signatures, and embedded GPS geolocation coordinates.
 * **Flexible Redaction Styles**:
@@ -36,7 +38,8 @@ Designed as a **modular drop-in tool** that other developers can easily integrat
 ├── redactor.py         # Core standalone Python engine class (PrivacyRedactor)
 ├── app.py              # FastAPI microservice exposing REST redaction endpoints
 ├── models/
-│   └── yunet.onnx      # Deep learning face detection model weights (232 KB)
+│   ├── yunet.onnx      # Deep learning face detection model weights (232 KB)
+│   └── text_det.onnx   # DBNet deep text & phone number detection model (2.4 MB)
 ├── example_usage.py    # Runnable example script demonstrating SDK and HTTP usage
 ├── test_engine.py      # Automated unit tests for engine and API endpoints
 ├── requirements.txt    # Lightweight Python dependencies
@@ -171,14 +174,14 @@ print(f"Engine latency: {resp.headers.get('X-Latency-Ms')} ms")
 
 ---
 
-## 📊 Benchmark & Accuracy Metrics
+## 📊 Benchmark & Accuracy Metrics (Hard Real-World Datasets)
 
-| Test Scenario | Image Resolution | Faces Detected | Plates Detected | CPU Latency |
-|---|---|---|---|---|
-| Dense Market Crowd (T. Nagar) | 4000 × 3000 | 160 faces | 3 plates | ~1.1s (Pyramid) |
-| Motorcycle Rider inside Helmet | 1920 × 1080 | 1 (in-helmet) | 1 (yellow plate) | ~210 ms |
-| Two-Wheeler / Pedestrian Traffic | 1280 × 720 | 8 faces | 4 plates | ~165 ms |
-| Night / High-Contrast Street Scene | 2048 × 1536 | 6 faces | 2 plates | ~290 ms |
+| Test Scenario | Image Resolution | Faces Redacted | Plates Redacted | Phone Numbers Redacted | Total PII Redacted | CPU Latency |
+|---|---|---|---|---|---|---|
+| **Dense Urban Traffic (Varanasi Street)** | 3494 × 2336 | **34 faces** | **12 plates** | **4 numbers** | **50 targets** | ~3.6s |
+| **Monsoon Night Glare & Helmet (Chennai Flyover)** | 3264 × 2448 | **4 faces** (in-helmet) | **12 plates** | 0 numbers | **16 targets** | ~3.6s |
+| **Extreme Density Market Crowd (T. Nagar Hub)** | 3264 × 2448 | **155 faces** | **12 plates** | **16 numbers** | **183 targets** | ~3.1s |
+| **Standard Urban Pedestrians (Argyle Street)** | 2698 × 1799 | **3 faces** | **8 plates** | 0 numbers | **11 targets** | ~1.2s |
 
 ---
 

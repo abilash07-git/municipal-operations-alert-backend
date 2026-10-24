@@ -1,7 +1,7 @@
 """
-PrivacyRedactor - Production-grade Face & License Plate Redaction Engine
-High-accuracy privacy sanitization powered by OpenCV DNN & WIDER-FACE YuNet.
-Strips camera EXIF metadata, detects occluded/helmet faces, and masks private & commercial plates.
+PrivacyRedactor - Production-grade Face, License Plate & Number Redaction Engine
+High-accuracy privacy sanitization powered by OpenCV DNN, WIDER-FACE YuNet & DBNet.
+Strips camera EXIF metadata, detects occluded/helmet faces, vehicle plates & background phone numbers.
 """
 
 import os
@@ -14,37 +14,45 @@ import numpy as np
 
 class PrivacyRedactor:
     """
-    Modular Computer Vision Privacy Engine for automated face and vehicle plate redaction.
-    Can be used as a standalone Python library or embedded in web APIs.
+    Modular Computer Vision Privacy Engine for automated face, vehicle plate,
+    and phone number/digit redaction.
     """
 
     def __init__(
         self,
         model_path: Optional[str] = None,
+        text_det_path: Optional[str] = None,
         face_score_threshold: float = 0.30,
         face_nms_threshold: float = 0.30,
         enable_tiling: bool = True,
+        enable_numbers: bool = True,
         tiling_size: int = 1024,
         tiling_overlap: int = 128
     ):
         """
         Initialize the Privacy Redactor engine.
         :param model_path: Path to the yunet.onnx model file.
+        :param text_det_path: Path to text_det.onnx DBNet model file for phone numbers/digits.
         :param face_score_threshold: Confidence threshold for face detection [0.0 - 1.0].
         :param face_nms_threshold: Non-Maximum Suppression threshold for face overlap.
         :param enable_tiling: Enables multi-scale window tiling for high-res images to detect distant/small faces.
+        :param enable_numbers: Enables detection of background phone numbers, digits, and text.
         :param tiling_size: Crop size for tiling sliding window.
         :param tiling_overlap: Overlap size between adjacent windows.
         """
+        curr_dir = os.path.dirname(os.path.abspath(__file__))
+
         if model_path is None:
-            # Default to models/yunet.onnx relative to this file
-            curr_dir = os.path.dirname(os.path.abspath(__file__))
             model_path = os.path.join(curr_dir, "models", "yunet.onnx")
+        if text_det_path is None:
+            text_det_path = os.path.join(curr_dir, "models", "text_det.onnx")
 
         self.model_path = model_path
+        self.text_det_path = text_det_path
         self.face_score_threshold = face_score_threshold
         self.face_nms_threshold = face_nms_threshold
         self.enable_tiling = enable_tiling
+        self.enable_numbers = enable_numbers
         self.tiling_size = tiling_size
         self.tiling_overlap = tiling_overlap
 
@@ -53,6 +61,20 @@ class PrivacyRedactor:
                 f"YuNet ONNX model not found at {self.model_path}. "
                 "Ensure models/yunet.onnx is present."
             )
+
+        # Initialize DBNet text/number detector if available
+        self._text_model = None
+        if os.path.exists(self.text_det_path):
+            try:
+                net = cv2.dnn.readNet(self.text_det_path)
+                self._text_model = cv2.dnn_TextDetectionModel_DB(net)
+                self._text_model.setInputSize((736, 736))
+                self._text_model.setInputMean((123.675, 116.28, 103.53))
+                self._text_model.setInputScale(1.0 / 255.0 / np.array([0.229, 0.224, 0.225]))
+                self._text_model.setBinaryThreshold(0.3)
+                self._text_model.setPolygonThreshold(0.5)
+            except Exception:
+                self._text_model = None
 
     @staticmethod
     def strip_exif(pil_image: Image.Image) -> Image.Image:
@@ -168,20 +190,60 @@ class PrivacyRedactor:
                     "confidence": 0.90
                 })
                 count += 1
-                if count >= 8:
+                if count >= 12:
                     break
 
         return plates_detected
 
+    def detect_numbers(self, cv_img: np.ndarray, exclude_boxes: Optional[List[List[int]]] = None) -> List[Dict]:
+        """
+        Detects phone numbers, digit sequences, and sensitive background contact numbers
+        on signboards, banners, and vehicles using deep DBNet text detection.
+        """
+        if not self.enable_numbers or self._text_model is None:
+            return []
+
+        numbers_detected = []
+        try:
+            boxes, confs = self._text_model.detect(cv_img)
+            if boxes is not None and len(boxes) > 0:
+                for b, conf in zip(boxes, confs):
+                    bx, by, bw, bh = cv2.boundingRect(b)
+                    aspect = bw / float(bh if bh > 0 else 1)
+                    area = bw * bh
+
+                    # Phone numbers and contact digits are typically horizontal text lines (aspect >= 1.4)
+                    if 1.4 <= aspect <= 12.0 and 300 < area < 50000:
+                        box = [int(bx), int(by), int(bw), int(bh)]
+                        # Do not duplicate if already covered by face or license plate
+                        if exclude_boxes and self._is_duplicate_box(box, exclude_boxes, iou_thresh=0.25):
+                            continue
+                        numbers_detected.append({
+                            "type": "Number / Phone / Digits",
+                            "box": box,
+                            "confidence": round(float(conf), 3)
+                        })
+                        if len(numbers_detected) >= 20:
+                            break
+        except Exception:
+            pass
+
+        return numbers_detected
+
     def detect_all(self, image_input: Union[bytes, np.ndarray, Image.Image]) -> Tuple[np.ndarray, List[Dict]]:
         """
-        Runs complete detection for both faces and license plates on the given input image.
+        Runs complete detection for faces, vehicle license plates, and phone numbers/digits.
         Returns: (cv_image_bgr, targets_list)
         """
         cv_img = self._load_as_cv2(image_input)
         faces = self.detect_faces(cv_img)
         plates = self.detect_plates(cv_img)
-        all_targets = faces + plates
+
+        # Exclude existing boxes to avoid duplicate masks for numbers
+        existing_boxes = [f["box"] for f in faces] + [p["box"] for p in plates]
+        numbers = self.detect_numbers(cv_img, exclude_boxes=existing_boxes)
+
+        all_targets = faces + plates + numbers
         return cv_img, all_targets
 
     def redact(
@@ -192,7 +254,8 @@ class PrivacyRedactor:
         quality: int = 90
     ) -> Tuple[bytes, Dict]:
         """
-        Redacts detected faces and license plates, strips EXIF metadata, and returns clean JPEG bytes.
+        Redacts detected faces, license plates, and phone numbers/digits,
+        strips camera EXIF metadata, and returns clean JPEG bytes.
         :param image_input: Input image as bytes, PIL Image, or OpenCV BGR numpy array.
         :param style: "blackbox" (tight solid black rectangle) or "blur" (Gaussian blur).
         :param blur_kernel_size: Kernel size if style="blur" (must be odd).
@@ -207,7 +270,6 @@ class PrivacyRedactor:
 
         for t in targets:
             bx, by, bw, bh = t["box"]
-            # Clamp coordinates to image boundaries
             x1 = max(0, bx)
             y1 = max(0, by)
             x2 = min(w, bx + bw)
@@ -231,11 +293,13 @@ class PrivacyRedactor:
 
         face_count = sum(1 for t in targets if t["type"] == "Face")
         plate_count = sum(1 for t in targets if t["type"] == "License Plate")
+        num_count = sum(1 for t in targets if "Number" in t["type"])
 
         metadata = {
             "image_dimensions": {"width": w, "height": h},
             "faces_redacted": face_count,
             "plates_redacted": plate_count,
+            "numbers_redacted": num_count,
             "total_redactions": len(targets),
             "style": style,
             "latency_ms": latency_ms,
