@@ -521,6 +521,149 @@ async def get_raw_evidence(ticket_id: str, x_officer_token: Optional[str] = Head
         raise HTTPException(status_code=404, detail="Ticket not found")
     return FileResponse(os.path.join(STORAGE_VAULT, f"{ticket_id}_raw.jpg"), media_type="image/jpeg")
 
+@app.get("/api/v1/reports")
+async def list_public_reports():
+    """Returns all public civic reports for citizen tracking, public feed, and map view."""
+    res = []
+    for t in TICKETS_DB.values():
+        res.append({
+            "ticket_id": t["ticket_id"],
+            "detected_problem": t["detected_problem"],
+            "sanitized_description": t["sanitized_description"],
+            "coarse_coordinates": t["coarse_coordinates"],
+            "ward": t["ward"],
+            "status": t["status"],
+            "assigned_department": t.get("assigned_department_name", "Pending Municipal Dispatch"),
+            "probabilistic_eta": t["sla"]["probabilistic_eta_range"] if t.get("sla") else "Pending Dispatch",
+            "public_image_url": t["public_image_url"],
+            "created_at": t["created_at"]
+        })
+    return {"total": len(res), "reports": res}
+
+@app.get("/api/v1/admin/dashboard-stats")
+async def get_dashboard_stats():
+    """Real-time KPI metrics for the Admin Dashboard."""
+    total = len(TICKETS_DB)
+    pending = sum(1 for t in TICKETS_DB.values() if t.get("status") == "PENDING_ADMIN_ALERT")
+    dispatched = sum(1 for t in TICKETS_DB.values() if t.get("status") == "ALERT_DISPATCHED")
+    deadlocked = sum(1 for t in TICKETS_DB.values() if t.get("status") == "DEADLOCK_ESCALATED")
+    critical = sum(1 for t in TICKETS_DB.values() if t.get("suggested_priority") == "CRITICAL" or t.get("priority") == "CRITICAL")
+    
+    dept_counts = {k: 0 for k in IMPORTANT_MUNICIPAL_DEPARTMENTS}
+    for t in TICKETS_DB.values():
+        dept = t.get("assigned_department") or t.get("pre_selected_department_id")
+        if dept in dept_counts:
+            dept_counts[dept] += 1
+
+    return {
+        "total_complaints": total,
+        "pending_alerts": pending,
+        "alerts_dispatched": dispatched,
+        "deadlock_escalations": deadlocked,
+        "critical_priority_hazards": critical,
+        "department_distribution": dept_counts
+    }
+
+@app.post("/api/v1/admin/seed-demo-data")
+async def api_seed_demo_data():
+    TICKETS_DB.clear()
+    seed_demo_tickets(force=True)
+    return {"status": "SUCCESS", "message": "Demo tickets seeded successfully", "total_tickets": len(TICKETS_DB)}
+
+def seed_demo_tickets(force: bool = False):
+    if len(TICKETS_DB) > 0 and not force:
+        return
+    DEMO_ASSETS_DIR = os.path.join(BASE_DIR, "storage", "demo_assets")
+    seeds = [
+        {
+            "ticket_id": "TICK-ELEC-101",
+            "text": "Live snapped electric power line hanging into puddle near school! Sparks flying from transformer pole. Call 9840112233.",
+            "hazard_type": "electricity_hazard",
+            "lat": 13.0827,
+            "lng": 80.2707,
+            "ward": "Ward 77 - Egmore High Road",
+            "asset": "demo_elec.jpg"
+        },
+        {
+            "ticket_id": "TICK-SWD-102",
+            "text": "Severe water clogging on sub-arterial junction, stormwater drain choked with plastic, knee-deep flood. Call 9820123456.",
+            "hazard_type": "water_clogging",
+            "lat": 13.048,
+            "lng": 80.221,
+            "ward": "Ward 112 - T. Nagar",
+            "asset": "demo_swd.jpg"
+        },
+        {
+            "ticket_id": "TICK-HORT-103",
+            "text": "Uprooted heavy banyan tree trunk and broken branches blocking both lanes of traffic. Call 9840911223.",
+            "hazard_type": "tree_debris",
+            "lat": 13.033,
+            "lng": 80.245,
+            "ward": "Ward 140 - Alwarpet",
+            "asset": "demo_hort.jpg"
+        },
+        {
+            "ticket_id": "TICK-ROADS-104",
+            "text": "Dangerous crater pothole and broken asphalt cave-in causing two-wheeler skids. Call 9900112233.",
+            "hazard_type": "road_potholes",
+            "lat": 13.060,
+            "lng": 80.250,
+            "ward": "Ward 95 - Anna Salai",
+            "asset": "demo_roads.jpg"
+        }
+    ]
+    for s in seeds:
+        tid = s["ticket_id"]
+        src = os.path.join(DEMO_ASSETS_DIR, s["asset"])
+        if os.path.exists(src):
+            with open(src, "rb") as f:
+                raw_bytes = f.read()
+        else:
+            img = Image.new("RGB", (640, 480), color=(100, 100, 100))
+            buf = io.BytesIO()
+            img.save(buf, format="JPEG")
+            raw_bytes = buf.getvalue()
+
+        pub_bytes, vault_bytes, pii_targets = redact_and_sanitize(raw_bytes)
+        with open(os.path.join(STORAGE_PUBLIC, f"{tid}_redacted.jpg"), "wb") as f:
+            f.write(pub_bytes)
+        with open(os.path.join(STORAGE_VAULT, f"{tid}_raw.jpg"), "wb") as f:
+            f.write(vault_bytes)
+
+        classification = classify_municipal_problem(s["hazard_type"], s["text"])
+        risk_score = 98 if "wire" in s["text"].lower() or "spark" in s["text"].lower() else (94 if "manhole" in s["text"].lower() or "flood" in s["text"].lower() else 88)
+        priority = "CRITICAL" if risk_score >= 90 else "HIGH"
+
+        TICKETS_DB[tid] = {
+            "ticket_id": tid,
+            "raw_description": s["text"],
+            "sanitized_description": PHONE_REGEX.sub("[REDACTED_PHONE]", s["text"]),
+            "exact_coordinates": {"latitude": s["lat"], "longitude": s["lng"]},
+            "coarse_coordinates": {"latitude": round(s["lat"], 3), "longitude": round(s["lng"], 3)},
+            "ward": s["ward"],
+            "is_ward_boundary": False,
+            "risk_score": risk_score,
+            "suggested_priority": priority,
+            "status": "PENDING_ADMIN_ALERT",
+            "detected_problem": classification["detected_problem"],
+            "pre_selected_department_id": classification["recommended_department_id"],
+            "pre_selected_department_name": classification["recommended_department_name"],
+            "classification_confidence": classification["confidence"],
+            "assigned_department": None,
+            "alert_dispatched": False,
+            "alert_details": None,
+            "public_image_url": f"/api/v1/public/media/{tid}_redacted.jpg",
+            "official_vault_url": f"/api/v1/official/reports/{tid}/raw-evidence",
+            "pii_masked_count": len(pii_targets),
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "reassignment_hops": [],
+            "history": [{"action": "SEEDED_FOR_DEMO", "timestamp": datetime.now(timezone.utc).isoformat()}]
+        }
+
+@app.on_event("startup")
+async def startup_event():
+    seed_demo_tickets()
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)

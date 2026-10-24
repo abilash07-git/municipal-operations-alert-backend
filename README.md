@@ -1,4 +1,6 @@
-# Municipal Operations & Alert Dispatch Platform (Backend Engine)`n`n![FastAPI](https://img.shields.io/badge/FastAPI-v4.5.0-009688.svg) ![OpenCV](https://img.shields.io/badge/OpenCV-YuNet-5C3EE8.svg) ![Status](https://img.shields.io/badge/Deployment-Ready-success.svg)
+# Municipal Operations & Alert Dispatch Platform (Backend Engine)
+
+![FastAPI](https://img.shields.io/badge/FastAPI-v4.5.0-009688.svg) ![OpenCV](https://img.shields.io/badge/OpenCV-YuNet-5C3EE8.svg) ![Status](https://img.shields.io/badge/Deployment-Ready-success.svg)
 
 > **Challenge 10 (Your City, Your Services) — IMPACTX 2026**  
 > Semi-Automated Civic Hazard Classification, Department Pre-Routing, Boundary Anti-Loop Deadlock Breaker & Privacy Preservation
@@ -18,6 +20,7 @@ python app.py
 ```
 * **Server runs at:** `http://localhost:8000`  
 * **Interactive OpenAPI Swagger Docs:** `http://localhost:8000/docs`
+* **Auto-Seed Demo Data:** Automatically pre-loaded on boot with 4 realistic civic hazard cases (Electricity, Water Clogging, Tree Debris, Pothole) with real photos, GPS, and risk scores.
 
 ### Step 3: Run Integration Test
 ```bash
@@ -40,58 +43,43 @@ The platform strictly routes civic issues to authorized statutory municipal depa
 
 ---
 
-## 3. Core Capabilities
+## 3. Complete Frontend Integration API Endpoints
 
-1. **Automated Computer Vision Privacy Pipeline**:
-   - Neural WIDER-FACE YuNet face detection & tight blackbox redaction.
-   - Dual-palette vehicle license plate masking (white private + yellow commercial transport).
-   - Strict EXIF metadata removal (prevents hardware serial or GPS leaks to public).
-   - Regex masking of citizen phone numbers in description fields.
-
-2. **Automated Hazard Classification & Pre-Routing**:
-   - Classifies complaints into **Electricity/Live Wire**, **Water Clogging/Drainage**, **Road Potholes**, and **Tree Debris**.
-   - Pre-selects the appropriate department in the Administrator Inbox.
-   - Computes dynamic urgency risk scores (e.g., Live snapped wires score **98/100, CRITICAL**).
-
-3. **Semi-Automated Rich Alert Dispatch**:
-   - Administrator reviews pre-selected complaint with a single click.
-   - Generates complete operational dispatch payload delivered via emergency channels:
-     * Exact GPS coordinates for field crews + 100m coarse coordinates for public tracking.
-     * Public redacted media URL vs. Official restricted evidence vault URL.
-     * Dynamic SLA clock with probabilistic weather-adjusted resolution window.
-
-4. **Anti-Ping-Pong Boundary Deadlock Breaker**:
-   - If two departments bounce a complaint back and forth across a ward boundary road, the system intercepts the loop.
-   - Automatically escalates the ticket directly to the Municipal Commissioner's Emergency Cell (`COMM-CTRL`) with a mandatory 1-hour SLA.
+| Category | Method | Endpoint | Description |
+| :--- | :--- | :--- | :--- |
+| **Citizen Intake** | `POST` | `/api/v1/reports` | Ingests citizen report (multipart form: `text`, `hazard_type`, `lat`, `lng`, `image`) |
+| **Public Feed / Map** | `GET` | `/api/v1/reports` | List of all public reports for citizen map/feed (coarse GPS, redacted photos) |
+| **Public Tracking** | `GET` | `/api/v1/public/reports/{id}` | Detailed citizen tracking view for a specific ticket |
+| **Public Media** | `GET` | `/api/v1/public/media/{filename}` | Serves the redacted JPG for citizen display |
+| **Admin Stats** | `GET` | `/api/v1/admin/dashboard-stats` | KPI summary cards: total reports, pending alerts, dispatched, critical count |
+| **Admin Inbox** | `GET` | `/api/v1/admin/unassigned-tickets` | Admin Inbox: Tickets waiting for alert dispatch with pre-filled department |
+| **Departments** | `GET` | `/api/v1/admin/departments` | Returns list of statutory municipal departments with SLA policies |
+| **1-Click Dispatch** | `POST` | `/api/v1/admin/send-alert` | Dispatches rich alert payload to concerned department |
+| **Reassign / Anti-Loop** | `POST` | `/api/v1/admin/reassign-alert` | Reassigns ticket & intercepts Ping-Pong reassignment loops |
+| **Officer Vault** | `GET` | `/api/v1/official/reports/{id}/raw-evidence` | Restricted Officer Vault view (Requires `X-Officer-Token: MUNICIPAL_CORP_OFFICER_2026`) |
+| **Dev Tools** | `POST` | `/api/v1/admin/seed-demo-data` | Resets/re-seeds the 4 demo hazard tickets anytime |
 
 ---
 
-## 4. Frontend Integration API Summary
-
-| Method | Endpoint | Description |
-| :--- | :--- | :--- |
-| `POST` | `/api/v1/reports` | Ingests citizen report (multipart form: `text`, `hazard_type`, `lat`, `lng`, `image`) |
-| `GET` | `/api/v1/admin/unassigned-tickets` | Admin Inbox: Tickets waiting for alert dispatch with pre-filled department |
-| `GET` | `/api/v1/admin/departments` | Returns list of statutory municipal departments with SLA policies |
-| `POST` | `/api/v1/admin/send-alert` | 1-Click Action: Dispatches rich alert payload to concerned department |
-| `POST` | `/api/v1/admin/reassign-alert` | Reassigns ticket & intercepts Ping-Pong reassignment loops |
-| `GET` | `/api/v1/public/reports/{id}` | Public Citizen Tracking view (Redacted image, 100m coarse GPS) |
-| `GET` | `/api/v1/official/reports/{id}/raw-evidence` | Restricted Officer Vault view (Requires `X-Officer-Token: MUNICIPAL_CORP_OFFICER_2026`) |
-
----
-
-## 5. Ready-to-Use Frontend Integration Code (React)
+## 4. Frontend Component (React + Tailwind CSS)
 
 ```tsx
 import React, { useState, useEffect } from 'react';
 
 export const MunicipalAlertConsole = () => {
+  const [stats, setStats] = useState(null);
   const [tickets, setTickets] = useState([]);
   const [selectedDept, setSelectedDept] = useState({});
 
   useEffect(() => {
+    // 1. Load Dashboard KPI Stats
+    fetch('http://localhost:8000/api/v1/admin/dashboard-stats')
+      .then(r => r.json())
+      .then(setStats);
+
+    // 2. Load Pending Complaints
     fetch('http://localhost:8000/api/v1/admin/unassigned-tickets')
-      .then(res => res.json())
+      .then(r => r.json())
       .then(data => {
         setTickets(data.tickets || []);
         const map = {};
@@ -118,32 +106,57 @@ export const MunicipalAlertConsole = () => {
   };
 
   return (
-    <div className="p-6 max-w-4xl mx-auto space-y-4">
-      <h1 className="text-2xl font-bold">Municipal Alert Dispatch Console</h1>
-      {tickets.map(t => (
-        <div key={t.ticket_id} className="p-4 border rounded shadow bg-white flex gap-4">
-          <img src={`http://localhost:8000${t.public_image_url}`} className="w-32 h-24 object-cover rounded" />
-          <div className="flex-1">
-            <h3 className="font-bold">{t.detected_problem} ({t.suggested_priority} - {t.risk_score}/100)</h3>
-            <p className="text-sm text-gray-600">{t.sanitized_description}</p>
-            <div className="mt-2 flex gap-2">
-              <select 
-                value={selectedDept[t.ticket_id]} 
-                onChange={e => setSelectedDept({...selectedDept, [t.ticket_id]: e.target.value})}
-                className="border rounded p-1 text-sm font-medium"
-              >
-                <option value="DEPT_ELECTRICITY">Electricity & Street Lighting (ELEC)</option>
-                <option value="DEPT_DRAINAGE">Stormwater Drainage (SWD)</option>
-                <option value="DEPT_ROADS">Roads & Infrastructure (ROADS)</option>
-                <option value="DEPT_HORTICULTURE">Horticulture & Tree Authority (HORT)</option>
-              </select>
-              <button onClick={() => sendAlert(t)} className="bg-blue-600 text-white px-3 py-1 text-sm rounded">
-                Send Alert with Details
-              </button>
+    <div className="p-6 max-w-5xl mx-auto space-y-6">
+      <div className="flex justify-between items-center">
+        <h1 className="text-2xl font-bold text-gray-900">Municipal Alert Dispatch Console</h1>
+        {stats && (
+          <div className="flex gap-3 text-sm">
+            <span className="bg-blue-100 text-blue-800 px-3 py-1 rounded font-semibold">Total: {stats.total_complaints}</span>
+            <span className="bg-amber-100 text-amber-800 px-3 py-1 rounded font-semibold">Pending: {stats.pending_alerts}</span>
+            <span className="bg-red-100 text-red-800 px-3 py-1 rounded font-semibold">Critical: {stats.critical_priority_hazards}</span>
+          </div>
+        )}
+      </div>
+
+      <div className="grid gap-4">
+        {tickets.map(t => (
+          <div key={t.ticket_id} className="p-4 border rounded shadow-sm bg-white flex gap-4">
+            <img src={`http://localhost:8000${t.public_image_url}`} className="w-36 h-28 object-cover rounded border" />
+            <div className="flex-1 space-y-2">
+              <div className="flex justify-between items-start">
+                <span className={`px-2 py-0.5 text-xs font-bold rounded ${
+                  t.risk_score >= 90 ? 'bg-red-100 text-red-800' : 'bg-amber-100 text-amber-800'
+                }`}>
+                  Risk Score: {t.risk_score}/100 ({t.suggested_priority})
+                </span>
+                <span className="text-xs text-gray-500 font-mono">{t.ticket_id}</span>
+              </div>
+              <h3 className="font-bold text-gray-900">{t.detected_problem}</h3>
+              <p className="text-sm text-gray-600">{t.sanitized_description}</p>
+              
+              <div className="pt-2 flex items-center gap-3">
+                <label className="text-xs font-semibold text-gray-500">Concerned Department:</label>
+                <select 
+                  value={selectedDept[t.ticket_id]} 
+                  onChange={e => setSelectedDept({...selectedDept, [t.ticket_id]: e.target.value})}
+                  className="border rounded px-2 py-1 text-sm font-medium bg-gray-50"
+                >
+                  <option value="DEPT_ELECTRICITY">Electricity & Street Lighting (ELEC)</option>
+                  <option value="DEPT_DRAINAGE">Stormwater Drainage (SWD)</option>
+                  <option value="DEPT_ROADS">Roads & Infrastructure (ROADS)</option>
+                  <option value="DEPT_HORTICULTURE">Horticulture & Tree Authority (HORT)</option>
+                </select>
+                <button 
+                  onClick={() => sendAlert(t)} 
+                  className="ml-auto bg-blue-600 hover:bg-blue-700 text-white font-semibold px-4 py-1.5 text-sm rounded shadow transition"
+                >
+                  Send Alert with Details
+                </button>
+              </div>
             </div>
           </div>
-        </div>
-      ))}
+        ))}
+      </div>
     </div>
   );
 };
