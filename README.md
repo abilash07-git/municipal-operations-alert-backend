@@ -1,4 +1,4 @@
-# Municipal Operations & Alert Dispatch Platform (Backend Engine)
+# Municipal Operations & Alert Dispatch Platform (Backend Engine)`n`n![FastAPI](https://img.shields.io/badge/FastAPI-v4.5.0-009688.svg) ![OpenCV](https://img.shields.io/badge/OpenCV-YuNet-5C3EE8.svg) ![Status](https://img.shields.io/badge/Deployment-Ready-success.svg)
 
 > **Challenge 10 (Your City, Your Services) — IMPACTX 2026**  
 > Semi-Automated Civic Hazard Classification, Department Pre-Routing, Boundary Anti-Loop Deadlock Breaker & Privacy Preservation
