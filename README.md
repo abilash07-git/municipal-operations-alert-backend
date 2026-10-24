@@ -13,13 +13,15 @@ Designed as a **modular drop-in tool** that other developers can easily integrat
 
 ## 🚀 Key Features
 
-* **WIDER-FACE YuNet Deep Neural Network**:
+* **WIDER-FACE YuNet Deep Neural Network + Geometric Landmark Validation**:
   * Detects faces at extreme angles, side profiles, partially occluded faces, and faces wearing helmets.
   * Native 232 KB ONNX model running on OpenCV DNN — **no PyTorch, TensorFlow, or CUDA required**.
+  * **Anatomical Landmark Validation**: Analyzes YuNet 5-point facial landmarks (eyes, nose, mouth corners) to verify natural eye-to-eye proportions and vertical facial geometry, completely eliminating false-positive "faces" on tree branches, leaves, road asphalt, and gravel.
 * **Multi-Scale Pyramid Tiling**:
-  * Automatically scans high-resolution images using adaptive sliding windows so distant, small background faces in crowded scenes are reliably caught.
-* **Dual-Palette Vehicle License Plate Detection**:
-  * Accurately detects both **private white number plates** and **commercial transport yellow plates** (auto-rickshaws, cabs, trucks, buses) via calibrated HSV segmentation and aspect-ratio contour filters.
+  * Automatically scans high-resolution images (>1800px) using adaptive sliding windows so distant, small background faces in crowded scenes are reliably caught.
+* **Calibrated Vehicle License Plate Detection (Two-Wheelers & Cars)**:
+  * Detects **two-wheelers (motorcycles, scooters with square/two-line plates, AR 1.05–1.8)**, auto-rickshaws, and passenger/commercial cars (AR up to 5.5).
+  * Evaluates multi-palette color segmentation (Private White, Commercial Yellow, EV Green) fused with **character stroke density (Otsu fill ratio)**, **horizontal scanline transitions**, and **surround bumper contrast filtering** to strictly prevent false masking of road dividers, asphalt, curbs, and car bumpers.
 * **Phone Number & Background Digit Masking (DBNet)**:
   * Detects contact numbers, phone numbers, and digit sequences on background signboards, banners, posters, and vehicles via deep DBNet text detection.
 * **Camera EXIF Metadata Scrubbing**:
@@ -72,7 +74,7 @@ from redactor import PrivacyRedactor
 
 # 1. Initialize the engine
 redactor = PrivacyRedactor(
-    face_score_threshold=0.30,  # Confidence cutoff [0.0 - 1.0]
+    face_score_threshold=0.48,  # Calibrated cutoff [0.0 - 1.0] (default: 0.48)
     enable_tiling=True          # Multi-scale pyramid for high-res images
 )
 

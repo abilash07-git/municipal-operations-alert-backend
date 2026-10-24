@@ -13,7 +13,7 @@ def demo_python_library():
     print("=" * 60)
 
     # Initialize the engine
-    redactor = PrivacyRedactor(face_score_threshold=0.30)
+    redactor = PrivacyRedactor(face_score_threshold=0.48)
 
     # Create or load sample image
     from PIL import Image, ImageDraw
