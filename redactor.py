@@ -125,7 +125,7 @@ class PrivacyRedactor:
                         for tf in tile_faces:
                             tbx, tby, tbw, tbh = tf[0:4].astype(int)
                             tconf = float(tf[-1])
-                            global_box = [xs + tbx, ys + tby, tbw, tbh]
+                            global_box = [int(xs + tbx), int(ys + tby), int(tbw), int(tbh)]
                             # Avoid duplicates from global pass
                             if not self._is_duplicate_box(global_box, [f["box"] for f in faces_detected]):
                                 faces_detected.append({
